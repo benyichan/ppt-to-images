@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 
 /**
- * 将网页 PPT（guizang-ppt-skill 格式）每页导出为 PNG 图片。
+ * 将网页 PPT（guizang-ppt-skill 格式）每页导出为高清晰度 PNG 图片。
  *
- * 用法: node export-ppt-images.mjs <html路径> [输出目录]
+ * 用法:
+ *   node scripts/export-ppt-images.mjs <html路径> [输出目录] [--scale N]
  *
- * 依赖: npm install -g puppeteer-core
+ *   --scale N    Retina 缩放因子 (1=普通, 2=Retina(默认), 3=超清)
+ *                例: --scale 2 输出 3840×2160, --scale 3 输出 5760×3240
+ *
+ * 依赖: npm install puppeteer-core
  *       需要本地 Chrome/Chromium
  */
 
 import puppeteer from 'puppeteer-core';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 
-// ── 配置 ──────────────────────────────────────────────
+// ── 常量 ──────────────────────────────────────────────
+
 const CHROME_PATHS = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -24,6 +28,9 @@ const CHROME_PATHS = [
   '/snap/bin/chromium',
 ];
 
+const VIEWPORT_WIDTH = 1920;
+const VIEWPORT_HEIGHT = 1080;
+
 // ── 工具函数 ──────────────────────────────────────────
 
 function timestamp() {
@@ -32,8 +39,15 @@ function timestamp() {
   return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function sanitize(str) {
-  return str.replace(/[\\/:*?"<>|.]/g, '-').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'untitled';
+function sanitizeTitle(str) {
+  // 保留中文字符和字母数字，其余替换为连字符
+  return str
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+    .slice(0, 60) || 'untitled';
 }
 
 function detectThemeColor(cssText) {
@@ -55,23 +69,44 @@ function detectTitle(html) {
   return match ? match[1].trim() : 'untitled';
 }
 
+function parseArgs(argv) {
+  let scale = 2; // 默认 Retina
+  const positional = [];
+
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--scale' && i + 1 < argv.length) {
+      scale = parseInt(argv[++i], 10);
+      if (isNaN(scale) || scale < 1 || scale > 4) {
+        console.error('--scale 必须是 1、2 或 3 (1=普通, 2=Retina, 3=超清)');
+        process.exit(1);
+      }
+    } else {
+      positional.push(argv[i]);
+    }
+  }
+
+  return { htmlPath: positional[0], outDir: positional[1], scale };
+}
+
 // ── 主流程 ────────────────────────────────────────────
 
 async function main() {
-  const args = process.argv.slice(2);
-  if (args.length < 1) {
-    console.error('用法: node export-ppt-images.mjs <html文件路径> [输出目录]');
+  const { htmlPath: rawPath, outDir: rawOutDir, scale } = parseArgs(process.argv.slice(2));
+
+  if (!rawPath) {
+    console.error('用法: node export-ppt-images.mjs <html文件路径> [输出目录] [--scale N]');
+    console.error('  --scale 1=普通(1920×1080), 2=Retina(3840×2160,默认), 3=超清(5760×3240)');
     process.exit(1);
   }
 
-  const htmlPath = path.resolve(args[0]);
+  const htmlPath = path.resolve(rawPath);
   if (!fs.existsSync(htmlPath)) {
     console.error(`文件不存在: ${htmlPath}`);
     process.exit(1);
   }
 
   const htmlDir = path.dirname(htmlPath);
-  const outDir = args[1] ? path.resolve(args[1]) : path.join(htmlDir, 'exports');
+  const outDir = rawOutDir ? path.resolve(rawOutDir) : path.join(htmlDir, 'exports');
   fs.mkdirSync(outDir, { recursive: true });
 
   // 读取 HTML 获取元数据
@@ -79,14 +114,18 @@ async function main() {
   const title = detectTitle(htmlContent);
   const theme = detectThemeColor(htmlContent);
   const ts = timestamp();
-  const baseName = `${theme}-${sanitize(title)}-${ts}`;
+  const baseName = `${theme}-${sanitizeTitle(title)}-${ts}`;
+
+  const effW = VIEWPORT_WIDTH * scale;
+  const effH = VIEWPORT_HEIGHT * scale;
 
   console.log(`📄 PPT: ${title}`);
   console.log(`🎨 主题: ${theme}`);
+  console.log(`📐 分辨率: ${VIEWPORT_WIDTH}×${VIEWPORT_HEIGHT} @${scale}x = ${effW}×${effH} px`);
   console.log(`📁 输出: ${outDir}`);
   console.log('');
 
-  // 启动浏览器
+  // ── 启动浏览器 ──
   let browser;
   for (const chromePath of CHROME_PATHS) {
     if (fs.existsSync(chromePath)) {
@@ -99,7 +138,6 @@ async function main() {
     }
   }
   if (!browser) {
-    // 尝试自动查找
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -108,23 +146,26 @@ async function main() {
 
   const page = await browser.newPage();
 
-  // 设置视口为 1920×1080 (16:9)
-  await page.setViewport({ width: 1920, height: 1080 });
+  // 高清晰度视口：deviceScaleFactor 控制 Retina 渲染
+  await page.setViewport({
+    width: VIEWPORT_WIDTH,
+    height: VIEWPORT_HEIGHT,
+    deviceScaleFactor: scale,
+  });
 
-  // 加载 HTML 文件
+  // ── 加载 HTML ──
   await page.goto('file://' + htmlPath.replace(/\\/g, '/'), {
     waitUntil: 'networkidle0',
     timeout: 30000,
   });
 
-  // 等待渲染完成
   await page.waitForSelector('.slide');
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise(r => setTimeout(r, 1500)); // 等 WebGL + 字体加载
 
   // 查找所有幻灯片
-  const slideCount = await page.evaluate(() => {
-    return document.querySelectorAll('#deck > .slide').length;
-  });
+  const slideCount = await page.evaluate(() =>
+    document.querySelectorAll('#deck > .slide').length
+  );
 
   if (slideCount === 0) {
     console.error('未找到幻灯片页面');
@@ -134,7 +175,7 @@ async function main() {
 
   console.log(`共 ${slideCount} 页，开始导出...\n`);
 
-  // 逐页截图
+  // ── 逐页截图 ──
   for (let i = 0; i < slideCount; i++) {
     // 翻到第 i 页
     await page.evaluate((idx) => {
@@ -145,16 +186,15 @@ async function main() {
       }
       window.__currentSlideIndex = idx;
 
-      // 触发当前页的动效
-      if (window.__playSlide) {
-        window.__playSlide(idx);
-      }
+      // 触发动效
+      if (window.__playSlide) window.__playSlide(idx);
 
       // 更新导航圆点
-      const dots = document.querySelectorAll('#nav .dot');
-      dots.forEach((d, j) => d.classList.toggle('active', j === idx));
+      document.querySelectorAll('#nav .dot').forEach((d, j) =>
+        d.classList.toggle('active', j === idx)
+      );
 
-      // 更新 body class 切换背景
+      // 切换背景
       const el = document.querySelectorAll('.slide')[idx];
       if (el) {
         const th = el.dataset.theme || (el.classList.contains('light') ? 'light' : 'dark');
@@ -162,10 +202,10 @@ async function main() {
       }
     }, i);
 
-    // 等待动效完成
+    // 等动效播放完 + WebGL 稳定
     await new Promise(r => setTimeout(r, 1200));
 
-    // 截图当前页面
+    // 截图
     const filePath = path.join(outDir, `${baseName}-slide-${String(i + 1).padStart(2, '0')}.png`);
     await page.screenshot({
       path: filePath,
@@ -173,13 +213,18 @@ async function main() {
       type: 'png',
     });
 
-    const size = fs.statSync(filePath).size;
-    console.log(`  [${i + 1}/${slideCount}] ${path.basename(filePath)} (${(size / 1024).toFixed(0)} KB)`);
+    const sizeKB = (fs.statSync(filePath).size / 1024).toFixed(0);
+    console.log(`  [${i + 1}/${slideCount}] ${path.basename(filePath)} (${sizeKB} KB @ ${effW}×${effH})`);
   }
 
   await browser.close();
 
-  console.log(`\n✅ 导出完成！共 ${slideCount} 张图片`);
+  const totalMB = (fs.readdirSync(outDir)
+    .filter(f => f.startsWith(baseName))
+    .reduce((sum, f) => sum + fs.statSync(path.join(outDir, f)).size, 0) / 1024 / 1024
+  ).toFixed(1);
+
+  console.log(`\n✅ 导出完成！共 ${slideCount} 张图片 (合计 ${totalMB} MB)`);
   console.log(`   📂 ${outDir}`);
 }
 
