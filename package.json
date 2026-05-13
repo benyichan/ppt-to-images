@@ -1,0 +1,15 @@
+{
+  "name": "ppt-to-images",
+  "version": "1.0.0",
+  "description": "将 guizang-ppt-skill 生成的网页 PPT 每页导出为 PNG 图片",
+  "type": "module",
+  "main": "scripts/export-ppt-images.mjs",
+  "scripts": {
+    "export": "node scripts/export-ppt-images.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  },
+  "keywords": ["ppt", "presentation", "screenshot", "guizang"],
+  "license": "MIT"
+}
