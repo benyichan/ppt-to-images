@@ -1,7 +1,7 @@
 {
   "name": "ppt-to-images",
-  "version": "1.0.0",
-  "description": "将 guizang-ppt-skill 生成的网页 PPT 每页导出为 PNG 图片",
+  "version": "1.1.0",
+  "description": "\u5c06 guizang-ppt-skill \u751f\u6210\u7684\u7f51\u9875 PPT \u6bcf\u9875\u5bfc\u51fa\u4e3a\u9ad8\u6e05 PNG \u56fe\u7247 (\u652f\u6301 Retina @2x/@3x)",
   "type": "module",
   "main": "scripts/export-ppt-images.mjs",
   "scripts": {
@@ -10,6 +10,11 @@
   "dependencies": {
     "puppeteer-core": "^24.0.0"
   },
-  "keywords": ["ppt", "presentation", "screenshot", "guizang"],
+  "keywords": [
+    "ppt",
+    "presentation",
+    "screenshot",
+    "guizang"
+  ],
   "license": "MIT"
 }
